@@ -15,12 +15,15 @@ def GetPriceDataFromExchangeFinnHub(event, context):
     # For debugging the input, write the EVENT to CloudWatch logs
     print(json.dumps(event))
 
-    for row in event["data"]:
+    # Data is sent to Lambda via a HTTPS POST call. We want to get to the payload send by Snowflake
+    event_body = event["body"]
+    payload = json.loads(event_body)
+    
+    for row in payload["data"]:
         sflkRowRef = row[0] # This is how Snowflake keeps track of data as it gets returned
         symbol = row[1]    # The data passed in from Snowflake that the input row contains.
         fromDate = row[2]
         toDate = row[3]
-        
         
         # Will return URL without token to Snowflake for tracking
         URL = f'https://finnhub.io/api/v1/stock/candle?symbol={symbol}&resolution=D&from={fromDate}&to={toDate}'
