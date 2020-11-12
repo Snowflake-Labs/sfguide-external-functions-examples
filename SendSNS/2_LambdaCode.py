@@ -7,7 +7,11 @@ def SendNotification(event, context):
     retVal= {}
     retVal["data"] = []
     
-    for row in event["data"]:
+    # Data is sent to Lambda via a HTTPS POST call. We want to get to the payload send by Snowflake
+    event_body = event["body"]
+    payload = json.loads(event_body)
+    
+    for row in payload["data"]:
         sflkRowRef = row[0] # This is how Snowflake keeps track of data as it gets returned
         content = row[1]    # The data passed in from Snowflake that the input row contains.
                             # If the passed in data was a Variant, it lands here as a dictionary. Handy!
