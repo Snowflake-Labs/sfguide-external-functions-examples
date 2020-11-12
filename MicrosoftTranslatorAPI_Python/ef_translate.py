@@ -10,7 +10,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
  
    headers = {
        "Ocp-Apim-Subscription-Key": "<YOUR-COGNITIVE-SERVICES-KEY>",
-       "Ocp-apim-subscription-region": "westus",
+       "Ocp-apim-subscription-region": "<YOUR-COGNITIVE-SERVICES-REGION>",
        "Content-Type": "application/json"
    }
  
@@ -26,7 +26,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
            body.append({"text": row[1]})
       
        # Microsoft recommends using asynchronous APIs for network IO.
-	 # This example uses httpx library to make async calls to the API.
+       # This example uses httpx library to make async calls to the API.
        client = httpx.AsyncClient()
        response = await client.post(constructed_url, headers = headers, json = body)
        response_json = response.json()
