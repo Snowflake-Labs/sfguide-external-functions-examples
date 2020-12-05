@@ -1,0 +1,277 @@
+/*
+ Azure resource manager template for setting up Azure side of things for external functions.
+ This template creates an API Management instance, an Azure Function, a storage account and hooks everything up.
+ Currently it is not possible to create an azure AD application using ARM templates so the customer needs
+ to manually create the application before running this template
+
+Steps for creating external function using this template:
+ 1. Create a new app registration that represents the API gateway and Azure Function app
+ 2. Provide the application id in the parameters.json and deploy this template
+ 3. Note the URL of the API management instance and the Function App  
+ 4. Create API integration in Snowflake using the API management URL and the azure AD application ID
+ 5. Get the service principal of the Snowflake application created using the consent flow
+ 6. Replace SNOWFLAKE_SERVICE_PRINCIPAL_ID with the above value in the validate-jwt policy
+ 7. Create and run the external function
+*/
+
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "apiManagementServiceName": {
+            "type": "String"
+        },
+        "functionAppName": {
+            "type": "String"
+        },
+        "storageAccountName": {
+            "defaultValue": "[concat('sa', uniqueString(resourceGroup().id))]",
+            "type": "String"
+        },
+        "publisherEmail": {
+            "type": "String"
+        },
+        "azureadApplicationId": {
+            "type": "String"
+        }
+    },
+    "variables": {
+        "functionAppId": "[resourceId('Microsoft.Web/sites', parameters('functionAppName'))]"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.ApiManagement/service",
+            "apiVersion": "2019-12-01",
+            "name": "[parameters('apiManagementServiceName')]",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', parameters('functionAppName'))]"
+            ],
+            "sku": {
+                "name": "Developer",
+                "capacity": 1
+            },
+            "properties": {
+                "publisherEmail": "[parameters('publisherEmail')]",
+                "publisherName": "[parameters('publisherEmail')]",
+                "notificationSenderEmail": "apimgmt-noreply@mail.windowsazure.com",
+                "hostnameConfigurations": [
+                    {
+                        "type": "Proxy",
+                        "hostName": "[concat(parameters('apiManagementServiceName'), '.azure-api.net')]",
+                        "negotiateClientCertificate": false,
+                        "defaultSslBinding": true
+                    }
+                ],
+                "customProperties": {
+                    // These values are set to false in the template generated from the portal
+                    "Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10": "False",
+                    "Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls11": "False",
+                    "Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Ssl30": "False",
+                    "Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Ciphers.TripleDes168": "False",
+                    "Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Tls10": "False",
+                    "Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Tls11": "False",
+                    "Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Backend.Protocols.Ssl30": "False",
+                    "Microsoft.WindowsAzure.ApiManagement.Gateway.Protocols.Server.Http2": "False"
+                },
+                "virtualNetworkType": "None",
+                "disableGateway": false
+            }
+        },
+        {
+            "type": "Microsoft.ApiManagement/service/apis",
+            "apiVersion": "2019-12-01",
+            "name": "[concat(parameters('apiManagementServiceName'), '/', parameters('apiManagementServiceName'))]",
+            "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service', parameters('apiManagementServiceName'))]"
+            ],
+            "properties": {
+                "displayName": "ext-func-stage",
+                "apiRevision": "1",
+                "description": "[concat('Import from \"', parameters('functionAppName'), '\" Function App')]", 
+                "subscriptionRequired": false,
+                "path": "ext-func-stage",
+                "protocols": [
+                    "https"
+                ],
+                "isCurrent": true
+            }
+        },
+        {
+            "type": "Microsoft.ApiManagement/service/backends",
+            "apiVersion": "2019-12-01",
+            "name": "[concat(parameters('apiManagementServiceName'), '/', parameters('apiManagementServiceName'))]",
+            "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service', parameters('apiManagementServiceName'))]"
+            ],
+            "properties": {
+                "description": "[concat('\"', parameters('functionAppName'), '\" Function App')]",
+                "url": "[concat('https://', parameters('functionAppName'), '.azurewebsites.net/api')]", 
+                "protocol": "http",
+                "resourceId": "[concat('https://management.azure.com/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Web/sites/', parameters('functionAppName'))]",
+                "credentials": {
+                    "header": {
+                        "x-functions-key": [
+                            "[listkeys(concat(variables('functionAppId'), '/host/default/'),'2019-08-01').functionKeys.default]"
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "type": "Microsoft.ApiManagement/service/policies",
+            "apiVersion": "2019-12-01",
+            "name": "[concat(parameters('apiManagementServiceName'), '/policy')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service', parameters('apiManagementServiceName'))]"
+            ],
+            "properties": {
+                "value": "<!--\r\n    IMPORTANT:\r\n    - Policy elements can appear only within the <inbound>, <outbound>, <backend> section elements.\r\n    - Only the <forward-request> policy element can appear within the <backend> section element.\r\n    - To apply a policy to the incoming request (before it is forwarded to the backend service), place a corresponding policy element within the <inbound> section element.\r\n    - To apply a policy to the outgoing response (before it is sent back to the caller), place a corresponding policy element within the <outbound> section element.\r\n    - To add a policy position the cursor at the desired insertion point and click on the round button associated with the policy.\r\n    - To remove a policy, delete the corresponding policy statement from the policy document.\r\n    - Policies are applied in the order of their appearance, from the top down.\r\n-->\r\n<policies>\r\n  <inbound />\r\n  <backend>\r\n    <forward-request />\r\n  </backend>\r\n  <outbound />\r\n</policies>",
+                "format": "xml"
+            }
+        },
+        {
+            "type": "Microsoft.ApiManagement/service/apis/operations",
+            "apiVersion": "2019-12-01",
+            "name": "[concat(parameters('apiManagementServiceName'), '/', parameters('apiManagementServiceName'), '/post-echo')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apiManagementServiceName'), parameters('apiManagementServiceName'))]",
+                "[resourceId('Microsoft.ApiManagement/service', parameters('apiManagementServiceName'))]"
+            ],
+            "properties": {
+                "displayName": "echo",
+                "method": "POST",
+                "urlTemplate": "/echo",
+                "templateParameters": [],
+                "responses": []
+            }
+        },
+        {
+            "type": "Microsoft.ApiManagement/service/apis/operations/policies",
+            "apiVersion": "2019-12-01",
+            "name": "[concat(parameters('apiManagementServiceName'), '/', parameters('apiManagementServiceName'), '/post-echo/policy')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.ApiManagement/service/apis/operations', parameters('apiManagementServiceName'), parameters('apiManagementServiceName'), 'post-echo')]",
+                "[resourceId('Microsoft.ApiManagement/service/apis', parameters('apiManagementServiceName'), parameters('apiManagementServiceName'))]",
+                "[resourceId('Microsoft.ApiManagement/service', parameters('apiManagementServiceName'))]"
+            ],
+            "properties": {
+                "value": "[concat('<policies>\r\n  <inbound>\r\n    <base />\r\n    <set-backend-service id=\"apim-generated-policy\" backend-id=\"', parameters('apiManagementServiceName'), '\" />', '<validate-jwt header-name=\"Authorization\" failed-validation-httpcode=\"401\"> \r\n             <openid-config url=\"https://login.microsoftonline.com/common/.well-known/openid-configuration\" /> \r\n             <required-claims> \r\n                 <claim name=\"appid\" match=\"any\"> \r\n                     <value>SNOWFLAKE_SERVICE_PRINCIPAL_ID</value> \r\n                 </claim> \r\n                <claim name=\"aud\" match=\"any\"> \r\n                     <value>', parameters('azureadApplicationId') ,'</value> \r\n                 </claim> \r\n             </required-claims> \r\n         </validate-jwt>' ,'\r\n  </inbound>\r\n  <backend>\r\n    <base />\r\n  </backend>\r\n <outbound>\r\n    <base />\r\n  </outbound>\r\n  <on-error>\r\n    <base />\r\n  </on-error>\r\n</policies>')]",
+                "format": "xml"
+            }
+        },
+        {
+            "type": "Microsoft.Web/sites",
+            "apiVersion": "2018-11-01",
+            "name": "[parameters('functionAppName')]",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[concat('Microsoft.Storage/storageAccounts/', parameters('storageAccountName'))]"
+            ],
+            "kind": "functionapp",
+            "properties": {
+                "name": "[parameters('functionAppName')]",
+                "siteConfig": {
+                    "appSettings": [
+                        {
+                            "name": "FUNCTIONS_EXTENSION_VERSION",
+                            "value": "~3"
+                        },
+                        {
+                            "name": "FUNCTIONS_WORKER_RUNTIME",
+                            "value": "node"
+                        },
+                        {
+                            "name": "WEBSITE_NODE_DEFAULT_VERSION",
+                            "value": "~12"
+                        },
+                        {
+                            "name": "AzureWebJobsStorage",
+                            "value": "[concat('DefaultEndpointsProtocol=https;AccountName=',parameters('storageAccountName'),';AccountKey=',listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2019-06-01').keys[0].value,';EndpointSuffix=','core.windows.net')]"
+                        },
+                        {
+                            "name": "AzureWebJobsDashboard",
+                            "value": "[concat('DefaultEndpointsProtocol=https;AccountName=',parameters('storageAccountName'),';AccountKey=',listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2019-06-01').keys[0].value,';EndpointSuffix=','core.windows.net')]"
+                        },
+                        {
+                            "name": "WEBSITE_CONTENTAZUREFILECONNECTIONSTRING",
+                            "value": "[concat('DefaultEndpointsProtocol=https;AccountName=',parameters('storageAccountName'),';AccountKey=',listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2019-06-01').keys[0].value,';EndpointSuffix=','core.windows.net')]"
+                        },
+                        {
+                            "name": "WEBSITE_CONTENTSHARE",
+                            "value": "[toLower(parameters('functionAppName'))]"
+                        }
+                    ]
+                },
+                "clientAffinityEnabled": true
+            },
+            "resources": [
+                {
+                    "name": "[concat(parameters('functionAppName'), '/authsettings')]",
+                    "apiVersion": "2018-11-01",
+                    "type": "Microsoft.Web/sites/config",
+                    "location": "[resourceGroup().location]",
+                    "dependsOn": [
+                        "[resourceId('Microsoft.Web/sites', parameters('functionAppName'))]"
+                    ],
+                    "properties": {
+                      "enabled": true,
+                      "unauthenticatedClientAction": "RedirectToLoginPage",
+                      "tokenStoreEnabled": true,
+                      "defaultProvider": "AzureActiveDirectory",
+                      "clientId": "[parameters('azureadApplicationId')]",
+                      "issuer": "[concat('https://sts.windows.net/', subscription().tenantId, '/')]"
+                    }
+                },
+                {
+                    "apiVersion": "2019-08-01",
+                    "name": "[concat(parameters('functionAppName'),'/', 'echo')]",
+                    "type": "Microsoft.Web/sites/functions",
+                    "dependsOn": [
+                        "[resourceId('Microsoft.Web/sites', parameters('functionAppName'))]"
+                    ],
+                    "properties": {
+                      "config": {
+                        "bindings": [
+                          {
+                            "name": "req",
+                            "webHookType": "genericJson",
+                            "direction": "in",
+                            "type": "httpTrigger",
+                            "authLevel": "function"
+                          },
+                          {
+                            "name": "res",
+                            "direction": "out",
+                            "type": "http"
+                          }
+                        ]
+                      },
+                      "files": {
+                        "index.js": "module.exports = async function (context, req) { \r\n     if (req.body) { \r\n         var rows = req.body.data; \r\n        var results = [];\r\n        var index = 0;\r\n        rows.forEach(row => {\r\n            results.push([index++, row[1]]);\r\n        }); \r\n        results = {\"data\": results} \r\n         context.res = { \r\n             body: JSON.stringify(results) \r\n         }; \r\n    } \r\n     else { \r\n         context.res = {\r\n               status: 400, \r\n            body: \"Please pass data in the request body\" \r\n        }; \r\n     } \r\n}"
+                      }
+                    }
+                  }
+            ]
+        },
+        {
+            "type": "Microsoft.Storage/storageAccounts",
+            "apiVersion": "2019-06-01",
+            "name": "[parameters('storageAccountName')]",
+            "location": "[resourceGroup().location]",
+            "sku": {
+                "name": "Standard_LRS"
+            }
+        }
+    ],
+    "outputs": {
+        "apiManagementUrl": {
+          "value": "[concat(parameters('apiManagementServiceName'), '.azure-api.net')]",
+          "type": "string"
+        },
+        "functionUrl": {
+            "value": "[concat('https://', parameters('apiManagementServiceName'), '.azure-api.net', '/ext-func-stage/echo')]",
+            "type": "string"
+          }
+    }
+}
