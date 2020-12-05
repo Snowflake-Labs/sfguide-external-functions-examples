@@ -112,7 +112,7 @@ Resources:
 
                       input_value_2 = row[2]
                       
-                      output_value = [input_value_1, input_value_2]
+                      output_value = ["Echoing inputs:", input_value_1, input_value_2]
 
                       row_to_return = [row_number, output_value]
 
