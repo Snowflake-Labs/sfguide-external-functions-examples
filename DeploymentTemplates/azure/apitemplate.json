@@ -86,11 +86,11 @@ Steps for creating external function using this template:
                 "[resourceId('Microsoft.ApiManagement/service', parameters('apiManagementServiceName'))]"
             ],
             "properties": {
-                "displayName": "ext-func-stage",
+                "displayName": "ext-func-api",
                 "apiRevision": "1",
                 "description": "[concat('Import from \"', parameters('functionAppName'), '\" Function App')]", 
                 "subscriptionRequired": false,
-                "path": "ext-func-stage",
+                "path": "ext-func-api",
                 "protocols": [
                     "https"
                 ],
@@ -265,12 +265,12 @@ Steps for creating external function using this template:
         }
     ],
     "outputs": {
-        "apiManagementUrl": {
-          "value": "[concat(parameters('apiManagementServiceName'), '.azure-api.net')]",
+        "API Management URL": {
+          "value": "[concat('https://', parameters('apiManagementServiceName'), '.azure-api.net')]",
           "type": "string"
         },
-        "functionUrl": {
-            "value": "[concat('https://', parameters('apiManagementServiceName'), '.azure-api.net', '/ext-func-stage/echo')]",
+        "Azure Function Http Trigger URL": {
+            "value": "[concat('https://', parameters('apiManagementServiceName'), '.azure-api.net', '/ext-func-api/echo')]",
             "type": "string"
           }
     }
