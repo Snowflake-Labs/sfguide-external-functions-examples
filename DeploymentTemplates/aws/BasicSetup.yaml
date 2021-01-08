@@ -1,15 +1,5 @@
-# Cloudformation template for setting up AWS side of things for external functions.
-# This template creates an API Gateway, a Lambda Function and two IAM roles and hooks everything up.
-
-# Steps for creating external function using this template:
-# 1. Go to AWS cloudformation and create a stack using this template
-# 2. Note the Gateway IAM role and URL of the "echo" method created in the API Gateway
-# 3. Create API integration in Snowflake using the Gatway URL and Gateway Role ARN
-# 4. Update the API Gateway role trust relation with API integrations API_AWS_IAM_USER_ARN and API_AWS_EXTERNAL_ID
-# 5. Create and run the external function
-
 AWSTemplateFormatVersion: "2010-09-09"
-Description: "API Gateway and Lambda function for Snowflake external functions"
+Description: "Template for creating API Gateway and Lambda function for Snowflake external functions"
 
 Parameters:
   apiGatewayStageName:
@@ -33,12 +23,11 @@ Parameters:
   apiGatewayIAMRoleName:
     Type: "String"
     AllowedPattern: "^[a-zA-Z0-9]+[-a-zA-Z0-9-]+[-a-zA-Z0-9]+$"
-    Default: "ext-func-api-role"
-    Description: "This is the role that will be used in Snowflake API Integration"
+    Description: "Role used with Snowflake API Integration"
 
   lambdaExecutionRoleName:
     Type: "String"
-    Default: "ext-func-lambda-role" 
+    AllowedPattern: "^[a-zA-Z0-9]+[-a-zA-Z0-9-]+[-a-zA-Z0-9]+$"
     Description: "Role used by the Lambda."
 
 
@@ -174,8 +163,8 @@ Resources:
         - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"  
 
 Outputs:
-  apiGatewayInvokeURL:
+  resourceInvocationUrl:
     Value: !Sub "https://${apiGateway}.execute-api.${AWS::Region}.amazonaws.com/${apiGatewayStageName}/echo"
 
-  roleArn:
+  awsRoleArn:
     Value: !GetAtt "apiIAMRole.Arn"
