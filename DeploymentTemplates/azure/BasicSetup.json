@@ -1,19 +1,3 @@
-/*
- Azure resource manager template for setting up Azure side of things for external functions.
- This template creates an API Management instance, an Azure Function, a storage account and hooks everything up.
- Currently it is not possible to create an azure AD application using ARM templates so the customer needs
- to manually create the application before running this template
-
-Steps for creating external function using this template:
- 1. Create a new app registration that represents the API gateway and Azure Function app
- 2. Provide the application id in the parameters.json and deploy this template
- 3. Note the URL of the API management instance and the Function App  
- 4. Create API integration in Snowflake using the API management URL and the azure AD application ID
- 5. Get the service principal of the Snowflake application created using the consent flow
- 6. Replace SNOWFLAKE_SERVICE_PRINCIPAL_ID with the above value in the validate-jwt policy
- 7. Create and run the external function
-*/
-
 {
     "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
     "contentVersion": "1.0.0.0",
@@ -63,8 +47,7 @@ Steps for creating external function using this template:
                         "defaultSslBinding": true
                     }
                 ],
-                "customProperties": {
-                    // These values are set to false in the template generated from the portal
+                "customProperties": {                
                     "Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls10": "False",
                     "Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Tls11": "False",
                     "Microsoft.WindowsAzure.ApiManagement.Gateway.Security.Protocols.Ssl30": "False",
