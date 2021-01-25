@@ -1,0 +1,170 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Template for creating API Gateway and Lambda function for Snowflake external functions"
+
+Parameters:
+  apiGatewayStageName:
+    Type: "String"
+    AllowedPattern: "^[-a-z0-9]+$"
+    Default: "ext-func-stage"
+    Description: "API deployment stage"
+
+  lambdaName:
+    Type: "String"
+    AllowedPattern: "^[a-zA-Z0-9]+[-a-zA-Z0-9-]+[-a-zA-Z0-9]+$"
+    Default: "ext-func-lambda"
+    Description: "Lambda instance name"
+
+  apiGatewayName:
+    Type: "String"
+    AllowedPattern: "^[a-zA-Z0-9]+[-a-zA-Z0-9-]+[-a-zA-Z0-9]+$"
+    Default: "ext-func-api"
+    Description: "API Gateway instance name"
+
+  apiGatewayIAMRoleName:
+    Type: "String"
+    AllowedPattern: "^[a-zA-Z0-9]+[-a-zA-Z0-9-]+[-a-zA-Z0-9]+$"
+    Description: "Role used with Snowflake API Integration"
+
+  lambdaExecutionRoleName:
+    Type: "String"
+    AllowedPattern: "^[a-zA-Z0-9]+[-a-zA-Z0-9-]+[-a-zA-Z0-9]+$"
+    Description: "Role used by the Lambda."
+
+
+Resources:
+  apiGateway:
+    Type: "AWS::ApiGateway::RestApi"
+    DependsOn : apiIAMRole
+    Properties:
+      Name: !Ref "apiGatewayName"
+      Description: "Snowflake external functions Gateway"
+      Policy: !Sub  
+          - '{ "Version": "2012-10-17", "Statement": [ {  "Effect": "Allow", "Principal": { "AWS": "arn:aws:sts::${AWS::AccountId}:assumed-role/${apiGatewayIAMRoleName}/snowflake" }, "Action": "execute-api:Invoke", "Resource": "${resourceArn}" }  ] }'
+          - resourceArn : !Join [ "", [ "execute-api:/", "*" ] ]
+      EndpointConfiguration:
+        Types:
+          - REGIONAL    
+
+  apiResource:
+    Type: 'AWS::ApiGateway::Resource'
+    Properties:
+      RestApiId: !Ref apiGateway
+      ParentId: !GetAtt 
+        - apiGateway
+        - RootResourceId
+      PathPart: echo
+      
+  apiGatewayRootMethod:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      AuthorizationType: "AWS_IAM"
+      HttpMethod: "POST"
+      Integration:
+        IntegrationHttpMethod: "POST"
+        Type: "AWS_PROXY"
+        Uri: !Sub
+          - "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${lambdaArn}/invocations"
+          - lambdaArn: !GetAtt "lambdaFunction.Arn"
+      ResourceId: !Ref "apiResource"
+      RestApiId: !Ref "apiGateway"
+
+  apiGatewayDeployment:
+    Type: "AWS::ApiGateway::Deployment"
+    DependsOn:
+      - "apiGatewayRootMethod"
+    Properties:
+      RestApiId: !Ref "apiGateway"
+      StageName: !Ref "apiGatewayStageName"
+
+  lambdaFunction:
+    Type: "AWS::Lambda::Function"
+    DependsOn : lambdaExecutionIAMRole
+    Properties:
+      Code:
+        ZipFile: |
+          import json
+
+          def handler(event, context):
+              status_code = 200
+              array_of_rows_to_return = []
+
+              try:
+                  event_body = event["body"]
+
+                  payload = json.loads(event_body)
+                  rows = payload["data"]
+
+                  for row in rows:
+                      row_number = row[0]
+
+                      input_value_1 = row[1]
+
+                      input_value_2 = row[2]
+                      
+                      output_value = ["Echoing inputs:", input_value_1, input_value_2]
+
+                      row_to_return = [row_number, output_value]
+
+                      array_of_rows_to_return.append(row_to_return)
+
+                  json_compatible_string_to_return = json.dumps({"data" : array_of_rows_to_return})
+
+              except Exception as err:
+                  status_code = 400
+                  json_compatible_string_to_return = event_body
+
+              return {
+                  'statusCode': status_code,
+                  'body': json_compatible_string_to_return
+              }
+      Description: "Echo Lambda created from CloudFormation template"
+      FunctionName: !Ref "lambdaName"
+      Handler: "index.handler"
+      Role: !GetAtt "lambdaExecutionIAMRole.Arn" 
+      Runtime: "python3.7"
+      Timeout: 10
+
+  lambdaApiGatewayInvoke:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !GetAtt "lambdaFunction.Arn"
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${apiGateway}/*/*/*"
+
+  apiIAMRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName : !Ref "apiGatewayIAMRoleName"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action:
+              - "sts:AssumeRole"
+            Effect: "Allow"
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${AWS::AccountId}:root"
+
+  lambdaExecutionIAMRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName : !Ref "lambdaExecutionRoleName"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action:
+              - "sts:AssumeRole"
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"  
+
+Outputs:
+  resourceInvocationUrl:
+    Value: !Sub "https://${apiGateway}.execute-api.${AWS::Region}.amazonaws.com/${apiGatewayStageName}/echo"
+
+  awsRoleArn:
+    Value: !GetAtt "apiIAMRole.Arn"
