@@ -14,6 +14,14 @@ Parameters:
     Default: "ext-func-lambda"
     Description: "Lambda instance name"
 
+  apiGatewayType:
+    Type: "String"
+    Default: "REGIONAL" 
+    AllowedValues:
+      - "REGIONAL"
+      - "PRIVATE"
+    Description: "API Gateway type to create"
+
   apiGatewayName:
     Type: "String"
     AllowedPattern: "^[a-zA-Z0-9]+[-a-zA-Z0-9-]+[-a-zA-Z0-9]+$"
@@ -30,6 +38,14 @@ Parameters:
     AllowedPattern: "^[a-zA-Z0-9]+[-a-zA-Z0-9-]+[-a-zA-Z0-9]+$"
     Description: "Role used by the Lambda."
 
+  sourceVpcId:
+    Type: "String"
+    Default: ""
+    Description: "Snowflake VPC that has access to private API Gateway. Used only when creating a private API Gateway"
+
+Conditions:
+  shouldCreateRegionalGateway: 
+    !Equals [!Ref apiGatewayType, "REGIONAL"]
 
 Resources:
   apiGateway:
@@ -39,11 +55,15 @@ Resources:
       Name: !Ref "apiGatewayName"
       Description: "Snowflake external functions Gateway"
       Policy: !Sub  
-          - '{ "Version": "2012-10-17", "Statement": [ {  "Effect": "Allow", "Principal": { "AWS": "arn:aws:sts::${AWS::AccountId}:assumed-role/${apiGatewayIAMRoleName}/snowflake" }, "Action": "execute-api:Invoke", "Resource": "${resourceArn}" }  ] }'
+          - '{ "Version": "2012-10-17", "Statement": [ {  "Effect": "Allow", "Principal": { "AWS": "arn:aws:sts::${AWS::AccountId}:assumed-role/${apiGatewayIAMRoleName}/snowflake" }, "Action": "execute-api:Invoke", "Resource": "${resourceArn}" , "Condition": { ${vpcCondition} } } ] }'
           - resourceArn : !Join [ "", [ "execute-api:/", "*" ] ]
+            vpcCondition: !If 
+              - shouldCreateRegionalGateway
+              - ""
+              - !Sub '"StringEquals": { "aws:sourceVpc": "${sourceVpcId}"}'
       EndpointConfiguration:
         Types:
-          - REGIONAL    
+          - !Ref apiGatewayType
 
   apiResource:
     Type: 'AWS::ApiGateway::Resource'
